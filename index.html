@@ -1132,7 +1132,7 @@ async function handleVisionUpload(file){
       const res=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-opus-4-5',max_tokens:4096,system:systemPrompt,messages:[{role:'user',content:contentItems}]})
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:4096,system:systemPrompt,messages:[{role:'user',content:contentItems}]})
       });
       if(!res.ok){const e=await res.text();throw new Error(`Anthropic API 오류 ${res.status}: ${e.slice(0,300)}`);}
       const data=await res.json();
@@ -1386,13 +1386,21 @@ function renderNeisRecords(rec){
       ${sec('창의적 체험활동(자율·동아리·진로)',rec.창체,'🎯')}
       ${sec('독서활동상황',rec.독서,'📖')}
       ${sec('행동특성 및 종합의견',rec.행특,'🧭')}
-      <div style="margin-top:12px">
-        <button class="btn btn-primary btn-sm" id="btnEvalRecords" onclick="evaluateRecords()">🤖 학생부 기재내용 AI 평가 (학업·진로·공동체)</button>
-        <span style="font-size:11px;color:var(--text3);margin-left:6px">※ 위에서 선택한 AI 제공사/키 사용(BYOK)</span>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label style="font-size:12px;color:var(--text2);font-weight:700">평가 모델</label>
+        <select id="evalModelSelect" onchange="localStorage.setItem('naesin_eval_tier',this.value)" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:var(--font);font-size:12px;background:var(--surface);color:var(--text)">
+          <option value="haiku">절약 — Haiku (가장 저렴)</option>
+          <option value="sonnet">표준 — Sonnet (추천·기본)</option>
+          <option value="opus">정밀 — Opus (최고품질)</option>
+        </select>
+        <button class="btn btn-primary btn-sm" id="btnEvalRecords" onclick="evaluateRecords()">🤖 학생부 기재내용 AI 평가</button>
       </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">※ AI 제공사/키는 'PDF·이미지 AI 인식' 탭에서 설정(BYOK) · 모델 등급은 Claude 사용 시 적용(Google은 Gemini Flash) · 평가는 학생당 1회라 표준(Sonnet) 권장</div>
       <div id="recordEvalResult"></div>
     </div>`;
   box.insertAdjacentHTML('beforeend',html);
+  const savedTier=localStorage.getItem('naesin_eval_tier')||'sonnet';
+  const _sel=document.getElementById('evalModelSelect'); if(_sel)_sel.value=savedTier;
 }
 /* ── 학생부 기재내용 학종 평가 (BYOK) ── */
 function _gradeSummaryForEval(){
@@ -1421,6 +1429,9 @@ async function evaluateRecords(){
 반드시 아래 JSON만 출력(다른 텍스트 금지):
 {"학업":{"등급":"A+","근거":"…"},"진로":{"등급":"A","근거":"…"},"공동체":{"등급":"B+","근거":"…"},"종합":{"등급":"A","총평":"…"}}
 근거는 기재내용의 구체적 사례를 인용해 각 2~3문장으로.`;
+  // 평가 모델 등급 선택(BYOK·Anthropic 적용 / Google은 Flash 고정)
+  const tier=(document.getElementById('evalModelSelect')||{}).value||localStorage.getItem('naesin_eval_tier')||'sonnet';
+  const evalModel={haiku:'claude-haiku-4-5-20251001',sonnet:'claude-sonnet-4-6',opus:'claude-opus-4-8'}[tier]||'claude-sonnet-4-6';
   const userText=`[성적 요약] ${_gradeSummaryForEval()||'성적 미입력'}\n\n[세부능력 및 특기사항]\n${(rec.세특||'').slice(0,6000)}\n\n[창의적 체험활동]\n${(rec.창체||'').slice(0,3000)}\n\n[독서활동]\n${(rec.독서||'').slice(0,1500)}\n\n[행동특성 및 종합의견]\n${(rec.행특||'').slice(0,2000)}`;
   try{
     let raw='';
@@ -1433,7 +1444,7 @@ async function evaluateRecords(){
     }else{
       const res=await fetch('https://api.anthropic.com/v1/messages',
         {method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-         body:JSON.stringify({model:'claude-opus-4-5',max_tokens:2048,system:sys,messages:[{role:'user',content:userText}]})});
+         body:JSON.stringify({model:evalModel,max_tokens:2048,system:sys,messages:[{role:'user',content:userText}]})});
       if(!res.ok)throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0,200)}`);
       raw=(await res.json()).content?.find(c=>c.type==='text')?.text||'';
     }
