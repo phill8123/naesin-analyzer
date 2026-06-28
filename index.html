@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>내신 성적 정밀 분석기 v3</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
 /* ═══ CSS Variables ═══ */
@@ -406,10 +404,8 @@ input::placeholder{color:var(--text3);}
     <div class="card-body">
       <div class="input-method-tabs" id="inputMethodTabs">
         <button class="im-tab active" onclick="setInputMethod('direct',this)">✏️ 직접 입력 <span class="im-badge">기본</span></button>
-        <button class="im-tab" onclick="setInputMethod('excel',this)">📊 엑셀 업로드 <span class="im-badge">.xlsx</span></button>
-        <button class="im-tab" onclick="setInputMethod('word',this)">📄 워드 업로드 <span class="im-badge">.docx</span></button>
-        <button class="im-tab" onclick="setInputMethod('html',this)">🌐 HTML 업로드 <span class="im-badge">.html</span></button>
-        <button class="im-tab" onclick="setInputMethod('vision',this)">🤖 AI 자동 인식 <span class="im-badge">Vision</span></button>
+        <button class="im-tab" onclick="setInputMethod('html',this)">🌐 NEIS HTML <span class="im-badge">.html</span></button>
+        <button class="im-tab" onclick="setInputMethod('vision',this)">🤖 PDF·이미지 AI 인식 <span class="im-badge">Vision</span></button>
       </div>
       <div id="tab-direct">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">
@@ -418,26 +414,6 @@ input::placeholder{color:var(--text3);}
         </div>
         <div id="gradeTableWrap"></div>
         <div class="table-summary" id="tableSummary" style="display:none"></div>
-      </div>
-      <div id="tab-excel" style="display:none">
-        <div class="banner banner-info">📌 양식 템플릿을 다운로드하여 성적 입력 후 업로드하세요.</div>
-        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-          <button class="btn btn-secondary" onclick="downloadExcelTemplate()">⬇️ 엑셀 양식 다운로드</button>
-          <span style="font-size:12px;color:var(--text2);align-self:center">컬럼: 학기 | 과목명 | 단위수 | 원점수 | 평균 | 표준편차 | 수강자수 | 성취도 | 석차등급</span>
-        </div>
-        <div class="upload-zone" id="excelZone" ondragover="dragOver(event,'excelZone')" ondragleave="dragLeave('excelZone')" ondrop="dropFile(event,'excel')">
-          <input type="file" accept=".xlsx,.xls" onchange="handleExcelUpload(this.files[0])">
-          <div class="uz-icon">📊</div><div class="uz-title">엑셀 파일 클릭 또는 드래그 업로드</div><div class="uz-sub">.xlsx / .xls</div>
-        </div>
-        <div id="excelPreview"></div>
-      </div>
-      <div id="tab-word" style="display:none">
-        <div class="banner banner-info">📌 [학기] 과목명 | 단위수 | 원점수 | 평균 | 표준편차 | 수강자수 | 성취도 | 석차등급 형식으로 입력</div>
-        <div class="upload-zone" id="wordZone" ondragover="dragOver(event,'wordZone')" ondragleave="dragLeave('wordZone')" ondrop="dropFile(event,'word')">
-          <input type="file" accept=".docx" onchange="handleWordUpload(this.files[0])">
-          <div class="uz-icon">📄</div><div class="uz-title">워드 파일 클릭 또는 드래그 업로드</div><div class="uz-sub">.docx</div>
-        </div>
-        <div id="wordPreview"></div>
       </div>
       <div id="tab-html" style="display:none">
         <div class="banner banner-info">🌐 <strong>NEIS 생활기록부 HTML</strong>을 올리면 성적을 자동 인식하고, <strong>세특·창체·독서·행특 기재내용도 분리</strong>해 정리합니다. (가장 정확한 방식)<br>
@@ -979,7 +955,7 @@ function saveAllSubjects(){ssub_(Object.values(AS.subjects).flat());}
 /* ════════════════════════════════════════
    PHASE 3 — 성적 입력
 ════════════════════════════════════════ */
-function setInputMethod(m,btn){AS.inputMethod=m;document.querySelectorAll('.im-tab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');['direct','excel','word','html','vision'].forEach(t=>{document.getElementById('tab-'+t).style.display=t===m?'':'none';});if(m==='direct')renderGradeTable();if(m==='vision')setTimeout(()=>{renderApiKeyStatus();renderProviderButtons();},50);}
+function setInputMethod(m,btn){AS.inputMethod=m;document.querySelectorAll('.im-tab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');['direct','html','vision'].forEach(t=>{const el=document.getElementById('tab-'+t);if(el)el.style.display=t===m?'':'none';});if(m==='direct')renderGradeTable();if(m==='vision')setTimeout(()=>{renderApiKeyStatus();renderProviderButtons();},50);}
 function renderStep3SemTabs(){const w=document.getElementById('step3SemTabs');w.innerHTML='';const activeSems=ALL_SEMS.filter(k=>(AS.subjects[k]||[]).length>0);activeSems.forEach(k=>{const list=AS.subjects[k]||[];const filled=list.filter(s=>!s.isAbsolute&&s.rawScore!=null).length;const dotClass=filled===0?'none':filled<list.length?'partial':'';const t=document.createElement('div');t.className='sem-tab'+(k===AS.step3Sem?' active':'');t.innerHTML=`<span class="score-dot ${dotClass}"></span>${k}학기<span class="subject-count">${list.length}</span>`;t.onclick=()=>{AS.step3Sem=k;renderStep3SemTabs();renderGradeTable();};w.appendChild(t);});if(!activeSems.includes(AS.step3Sem)&&activeSems.length>0){AS.step3Sem=activeSems[0];renderStep3SemTabs();}}
 function renderGradeTable(){
   const k=AS.step3Sem,list=AS.subjects[k]||[];
@@ -1066,13 +1042,9 @@ function renderStep3SubjectSummary(){
     .map(k=>`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:5px;background:var(--accent-lt);border:1px solid var(--accent-md);font-size:11px;font-weight:700;color:var(--accent)">${k}<span style="font-weight:800">${AS.subjects[k].length}</span></span>`).join('');
   el.innerHTML=`<span style="font-size:11px;color:var(--text3);margin-right:2px">전체 <strong style="color:var(--text)">${total}</strong>과목</span>${semParts}`;
 }
-function renderStep3(){renderStudentInfoDisplay('step3StudentInfo');renderStep3SemTabs();renderGradeTable();renderStep3SubjectSummary();AS.inputMethod='direct';document.querySelectorAll('.im-tab').forEach((b,i)=>b.classList.toggle('active',i===0));['direct','excel','word','html','vision'].forEach((t,i)=>{document.getElementById('tab-'+t).style.display=i===0?'':'none';});}
+function renderStep3(){renderStudentInfoDisplay('step3StudentInfo');renderStep3SemTabs();renderGradeTable();renderStep3SubjectSummary();AS.inputMethod='direct';document.querySelectorAll('.im-tab').forEach((b,i)=>b.classList.toggle('active',i===0));['direct','html','vision'].forEach((t,i)=>{const el=document.getElementById('tab-'+t);if(el)el.style.display=i===0?'':'none';});}
 
 /* ── Excel ── */
-function downloadExcelTemplate(){if(!window.XLSX){showToast('⚠️ SheetJS 로딩 중...');return;}const ws=XLSX.utils.aoa_to_sheet([['학기','과목명','단위수','원점수','과목평균','표준편차','수강자수','성취도','석차등급'],['1-1','국어','3','85','68.30','14.50','280','A','2'],['1-1','수학','4','72','55.20','18.30','280','B','3'],['1-2','영어Ⅰ','3','90','71.00','12.80','260','A','1']]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'성적입력');XLSX.writeFile(wb,'내신성적_양식.xlsx');showToast('✅ 양식 다운로드 완료');}
-function handleExcelUpload(file){if(!file||!window.XLSX){showToast('⚠️ SheetJS 로딩 중...');return;}const reader=new FileReader();reader.onload=e=>{try{const wb=XLSX.read(e.target.result,{type:'binary'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});if(rows.length<2){showToast('⚠️ 데이터 없음');return;}const data=rows.slice(1).filter(r=>r.some(c=>c!==''));const parsed=parseUploadedData(data);applyParsedData(parsed);document.getElementById('excelPreview').innerHTML=`<div class="banner" style="background:#ECFDF5;border-color:#A7F3D0;color:#065F46;margin-top:12px">✅ ${parsed.length}개 과목 인식 완료 — 직접 입력 탭에 자동 반영되었습니다.</div><button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="setInputMethod('direct',document.querySelector('.im-tab'))">직접 입력 탭에서 확인</button>`;}catch(err){showToast('⚠️ 파일 오류: '+err.message);}};reader.readAsBinaryString(file);}
-function handleWordUpload(file){if(!file||!window.mammoth){showToast('⚠️ mammoth.js 로딩 중...');return;}const reader=new FileReader();reader.onload=e=>{mammoth.extractRawText({arrayBuffer:e.target.result}).then(r=>{const lines=r.value.split('\n').map(l=>l.trim()).filter(Boolean);const parsed=parseWordLines(lines);applyParsedData(parsed);document.getElementById('wordPreview').innerHTML=`<div class="banner" style="background:#ECFDF5;border-color:#A7F3D0;color:#065F46;margin-top:12px">✅ ${parsed.length}개 과목 인식 완료</div><button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="setInputMethod('direct',document.querySelector('.im-tab'))">직접 입력 탭에서 확인</button>`;}).catch(err=>showToast('⚠️ 워드 오류: '+err.message));};reader.readAsArrayBuffer(file);}
-function parseWordLines(lines){const result=[];for(const line of lines){const m=line.match(/\[(\d-\d)\]\s*(.+)/);if(!m)continue;const semKey=m[1];const parts=m[2].split('|').map(p=>p.trim());if(parts.length<2)continue;result.push({semKey,n:parts[0],units:parts[1]?parseFloat(parts[1])||null:null,rawScore:parts[2]?parseFloat(parts[2])||null:null,mean:parts[3]?parseFloat(parts[3])||null:null,stdDev:parts[4]?parseFloat(parts[4])||null:null,studentCount:parts[5]?parseInt(parts[5])||null:null,achievement:parts[6]||null,rankGrade:parts[7]?parseInt(parts[7])||null:null,isAbsolute:parts[6]==='P'});}return result;}
 async function handleVisionUpload(file){
   if(!file)return;
   const provider=getAiProvider();
@@ -1197,7 +1169,6 @@ async function handleVisionUpload(file){
     showToast('⚠️ AI 인식 오류: '+err.message,4500);
   }
 }
-function parseUploadedData(rows){const result=[];for(const row of rows){if(!row[0]||!row[1])continue;const semKey=String(row[0]).trim();const n=String(row[1]).trim();if(!ALL_SEMS.includes(semKey))continue;result.push({semKey,n,units:row[2]?parseFloat(row[2])||null:null,rawScore:row[3]?parseFloat(row[3])||null:null,mean:row[4]?parseFloat(row[4])||null:null,stdDev:row[5]?parseFloat(row[5])||null:null,studentCount:row[6]?parseInt(row[6])||null:null,achievement:row[7]?String(row[7]).trim()||null:null,rankGrade:row[8]?parseInt(row[8])||null:null,isAbsolute:String(row[7]||'').trim()==='P'});}return result;}
 /* ── 과목명 정규화 SDB 매칭 ── */
 function normalizeName(n){
   return n
@@ -1540,7 +1511,7 @@ function handleHtmlUpload(file){
 
 function dragOver(e,id){e.preventDefault();document.getElementById(id).classList.add('dragover');}
 function dragLeave(id){document.getElementById(id).classList.remove('dragover');}
-function dropFile(e,type){e.preventDefault();const id={'excel':'excelZone','word':'wordZone','vision':'visionZone','html':'htmlZone'}[type];document.getElementById(id).classList.remove('dragover');const file=e.dataTransfer.files[0];if(!file)return;if(type==='excel')handleExcelUpload(file);else if(type==='word')handleWordUpload(file);else if(type==='vision')handleVisionUpload(file);else if(type==='html')handleHtmlUpload(file);}
+function dropFile(e,type){e.preventDefault();const id={'vision':'visionZone','html':'htmlZone'}[type];const z=document.getElementById(id);if(z)z.classList.remove('dragover');const file=e.dataTransfer.files[0];if(!file)return;if(type==='vision')handleVisionUpload(file);else if(type==='html')handleHtmlUpload(file);}
 
 /* ════════════════════════════════════════
    PHASE 4 — 결과 대시보드
