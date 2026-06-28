@@ -456,6 +456,10 @@ input::placeholder{color:var(--text3);}
           </div>
         </div>
         <div class="banner banner-info" id="visionBanner">🤖 생활기록부 PDF 또는 성적표 사진을 업로드하면 AI가 자동으로 성적을 인식합니다.</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;margin-bottom:12px;cursor:pointer;background:var(--surface2)">
+          <input type="checkbox" id="chkExtractRecords" style="margin-top:2px">
+          <span style="font-size:12px;color:var(--text2);line-height:1.5"><strong>📝 기재내용도 함께 추출</strong>(세특·창체·독서·행특) <span style="color:var(--text3)">— 추가 AI 호출(비용↑)</span><br><span style="font-size:11px;color:var(--text3)">※ 차선책: 분량이 많으면 일부 누락될 수 있어요. <strong>전체 기재가 목적이면 NEIS HTML 업로드를 권장</strong>합니다.</span></span>
+        </label>
         <div class="upload-zone" id="visionZone" ondragover="dragOver(event,'visionZone')" ondragleave="dragLeave('visionZone')" ondrop="dropFile(event,'vision')">
           <input type="file" accept="image/*,.pdf" onchange="handleVisionUpload(this.files[0])" id="visionFileInput">
           <div class="uz-icon">🖼️</div><div class="uz-title">성적표 이미지 또는 생활기록부 PDF 업로드</div><div class="uz-sub">JPG / PNG / PDF · 생활기록부 7번 항목 자동 인식</div>
@@ -1162,6 +1166,26 @@ async function handleVisionUpload(file){
       </div>`;
     showToast(`✅ ${extracted.length}개 과목 자동 인식 완료!`,3500);
 
+    // ── 차선책: 기재내용(세특·창체·독서·행특)도 함께 추출 (opt-in) ──
+    if(document.getElementById('chkExtractRecords')?.checked){
+      try{
+        loading.classList.add('show');
+        document.getElementById('visionProgressText').textContent='📝 기재내용(세특·창체·행특) 추출 중…';
+        const rec=await extractRecordsVision(base64, mediaType, isPDF, provider, apiKey);
+        loading.classList.remove('show');
+        if(rec.세특||rec.창체||rec.행특||rec.독서){
+          AS.records=rec;
+          document.getElementById('visionResultWrap').insertAdjacentHTML('beforeend','<div id="visionRecordsArea"></div>');
+          renderNeisRecords(rec,'visionRecordsArea');
+          showToast('✅ 기재내용 추출 완료 (분량 많으면 일부 누락 가능 — 검증 권장)',4000);
+        }else{ showToast('⚠️ 기재내용을 찾지 못했습니다.',3500); }
+      }catch(re){
+        loading.classList.remove('show');
+        document.getElementById('visionResultWrap').insertAdjacentHTML('beforeend',`<div class="banner banner-warning" style="margin-top:10px">⚠️ 기재내용 추출 오류: ${re.message}</div>`);
+        showToast('⚠️ 기재 추출 오류: '+re.message,4000);
+      }
+    }
+
   }catch(err){
     document.getElementById('visionLoading').classList.remove('show');
     document.getElementById('visionZone').style.display='';
@@ -1376,8 +1400,8 @@ function extractNeisRecords(doc){
   return {창체,세특,독서,행특};
 }
 /* ── 기재내용 미리보기 렌더 + 평가 버튼 ── */
-function renderNeisRecords(rec){
-  const box=document.getElementById('htmlPreview'); if(!box)return;
+function renderNeisRecords(rec,containerId='htmlPreview'){
+  const box=document.getElementById(containerId); if(!box)return;
   const sec=(label,txt,emoji)=>txt?`<details style="margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:8px 12px"><summary style="cursor:pointer;font-weight:700;font-size:13px">${emoji} ${label} <span style="color:var(--text3);font-weight:400">(${txt.length.toLocaleString()}자)</span></summary><div style="font-size:12px;line-height:1.6;color:var(--text2);margin-top:8px;max-height:240px;overflow-y:auto;white-space:pre-wrap">${txt.replace(/</g,'&lt;')}</div></details>`:'';
   const html=`
     <div class="vision-preview" style="margin-top:14px;border-top:2px dashed var(--border);padding-top:12px">
@@ -1402,6 +1426,42 @@ function renderNeisRecords(rec){
   const savedTier=localStorage.getItem('naesin_eval_tier')||'sonnet';
   const _sel=document.getElementById('evalModelSelect'); if(_sel)_sel.value=savedTier;
 }
+/* ── Vision(PDF·이미지) 기재내용 추출 (차선책, best-effort) ── */
+async function extractRecordsVision(base64, mediaType, isPDF, provider, apiKey){
+  const isGoogle=provider==='google';
+  const sys=`당신은 한국 고등학교 생활기록부 텍스트 추출 전문가입니다.
+주어진 생활기록부 이미지/PDF에서 아래 4개 항목의 텍스트를 **가능한 한 누락 없이 그대로** 옮겨 적으세요.
+- 세특: 교과학습발달상황의 '세부능력 및 특기사항'
+- 창체: 창의적 체험활동(자율·동아리·진로·봉사)
+- 독서: 독서활동상황
+- 행특: 행동특성 및 종합의견
+성적 표(원점수·등급)는 제외하고 서술형 기재내용만 추출하세요.
+반드시 아래 JSON만 출력(다른 텍스트·코드블록 금지):
+{"세특":"...","창체":"...","독서":"...","행특":"..."}`;
+  let raw='';
+  if(isGoogle){
+    const parts=[{text:sys},{inline_data:{mime_type:isPDF?'application/pdf':mediaType,data:base64}}];
+    const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
+      {method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
+       body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:0,maxOutputTokens:65536}})});
+    if(!res.ok)throw new Error(`Google API ${res.status}: ${(await res.text()).slice(0,200)}`);
+    raw=(await res.json()).candidates?.[0]?.content?.parts?.[0]?.text||'';
+  }else{
+    const content=isPDF
+      ?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},{type:'text',text:'위 지침대로 기재내용 4항목을 JSON으로 추출하세요.'}]
+      :[{type:'image',source:{type:'base64',media_type:mediaType,data:base64}},{type:'text',text:'위 지침대로 기재내용 4항목을 JSON으로 추출하세요.'}];
+    const res=await fetch('https://api.anthropic.com/v1/messages',
+      {method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+       body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:8192,system:sys,messages:[{role:'user',content}]})});
+    if(!res.ok)throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0,200)}`);
+    raw=(await res.json()).content?.find(c=>c.type==='text')?.text||'';
+  }
+  const cleaned=raw.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
+  const jm=cleaned.match(/\{[\s\S]*\}/); if(!jm)throw new Error('기재 JSON 응답을 찾지 못했습니다.');
+  const obj=JSON.parse(jm[0]);
+  return {세특:obj.세특||'',창체:obj.창체||'',독서:obj.독서||'',행특:obj.행특||''};
+}
+
 /* ── 학생부 기재내용 학종 평가 (BYOK) ── */
 function _gradeSummaryForEval(){
   const subs=getAllSubjects().filter(s=>s.rankGrade&&s.units);
