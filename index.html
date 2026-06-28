@@ -440,8 +440,8 @@ input::placeholder{color:var(--text3);}
         <div id="wordPreview"></div>
       </div>
       <div id="tab-html" style="display:none">
-        <div class="banner banner-info">🌐 성적표 HTML 파일을 업로드하면 테이블 데이터를 자동으로 파싱합니다.<br>
-          <span style="font-size:11px;margin-top:3px;display:block">컬럼 순서: <strong>학기 | 과목명 | 단위수 | 원점수 | 평균 | 표준편차 | 수강자수 | 성취도 | 석차등급</strong> (첫 번째 &lt;table&gt; 기준)</span>
+        <div class="banner banner-info">🌐 <strong>NEIS 생활기록부 HTML</strong>을 올리면 성적을 자동 인식하고, <strong>세특·창체·독서·행특 기재내용도 분리</strong>해 정리합니다. (가장 정확한 방식)<br>
+          <span style="font-size:11px;margin-top:3px;display:block">※ NEIS 형식이 아닌 일반 표는 컬럼 순서 <strong>학기 | 과목명 | 단위수 | 원점수 | 평균 | 표준편차 | 수강자수 | 성취도 | 석차등급</strong> 으로도 인식</span>
         </div>
         <div class="upload-zone" id="htmlZone" ondragover="dragOver(event,'htmlZone')" ondragleave="dragLeave('htmlZone')" ondrop="dropFile(event,'html')">
           <input type="file" accept=".html,.htm" onchange="handleHtmlUpload(this.files[0])">
@@ -1354,49 +1354,158 @@ function renderApiKeyStatus(){
     el.textContent='키 미입력';
     el.style.cssText='font-size:11px;font-weight:600;padding:3px 8px;border-radius:4px;background:#FEE2E2;color:#DC2626;white-space:nowrap;';
   }
-}/* ── HTML 업로드 파싱 ── */
+}/* ════════════════════════════════════════
+   NEIS 생활기록부 robust 파서 (성적 + 기재내용)
+════════════════════════════════════════ */
+const _nClean=(s)=>(s==null?'':String(s).replace(/\s+/g,' ').trim());
+const _nNum=(s)=>{if(s==null||s==='')return null;const v=parseFloat(String(s).replace(/[^\d.\-]/g,''));return Number.isFinite(v)?v:null;};
+function isNeisReportCard(doc){const t=doc.body?doc.body.textContent:'';return /교과학습발달상황/.test(t)&&(/원점수\s*\/\s*과목평균/.test(t)||/성취도\s*\(\s*수강자수/.test(t));}
+function _nGradeSection(doc){const els=Array.from(doc.querySelectorAll('[data-title]'));const sec=els.find(e=>/교과학습발달상황/.test(e.getAttribute('data-title')||''));return sec||doc.body;}
+function _nYearMap(scope){const doc=scope.ownerDocument;const map=new Map();let cur=null;const w=doc.createTreeWalker(scope,0x1|0x4,null);let node=w.currentNode;while(node){if(node.nodeType===3){const m=node.textContent.match(/([1-3])\s*학년/);if(m)cur=m[1];}else if(node.nodeName==='TABLE'){map.set(node,cur);}node=w.nextNode();}return map;}
+function _nHeaders(tbl){const hr=tbl.querySelector('thead tr')||tbl.querySelector('tr');if(!hr)return[];return Array.from(hr.querySelectorAll('th,td')).map(c=>c.textContent.replace(/\s+/g,''));}
+function _nIsGradeTable(h){const j=h.join('|');return /석차등급/.test(j)||/성취도\(수강자수\)/.test(j)||/원점수\/과목평균/.test(j);}
+function extractNeisGrades(doc){
+  const ALL=['1-1','1-2','2-1','2-2','3-1','3-2'];
+  const scope=_nGradeSection(doc), yearMap=_nYearMap(scope), out=[];
+  for(const tbl of Array.from(scope.querySelectorAll('table'))){
+    const headers=_nHeaders(tbl); if(!_nIsGradeTable(headers))continue;
+    const idx=(p)=>headers.findIndex(p);
+    const ci={sem:idx(h=>h.includes('학기')),
+      subject:(()=>{const e=headers.findIndex(h=>h==='과목');return e>=0?e:idx(h=>h.includes('과목')&&!h.includes('원점수'));})(),
+      units:idx(h=>h.includes('학점')||h.includes('단위')),score:idx(h=>h.includes('원점수')),
+      achv:idx(h=>h.includes('성취도')&&h.includes('수강')),achvOnly:idx(h=>h==='성취도'),rank:idx(h=>h.includes('석차등급'))};
+    const year=yearMap.get(tbl), body=tbl.querySelector('tbody')||tbl;
+    for(const tr of Array.from(body.querySelectorAll('tr'))){
+      const cells=Array.from(tr.querySelectorAll('td')).map(c=>_nClean(c.textContent));
+      if(cells.length<3)continue;
+      const semRaw=ci.sem>=0?cells[ci.sem]:cells[0];
+      if(!/^[12]$/.test(semRaw)||!year)continue;
+      const semKey=`${year}-${semRaw}`; if(!ALL.includes(semKey))continue;
+      const subject=ci.subject>=0?cells[ci.subject]:cells[2];
+      if(!subject||subject==='-')continue;
+      const units=_nNum(cells[ci.units]);
+      let rawScore=null,mean=null,stdDev=null;
+      if(ci.score>=0){const m=cells[ci.score].match(/([\d.]+)\s*\/\s*([\d.]+)\s*(?:\(\s*([\d.]+)\s*\))?/);if(m){rawScore=_nNum(m[1]);mean=_nNum(m[2]);stdDev=m[3]?_nNum(m[3]):null;}}
+      let achievement=null,studentCount=null;
+      const ac=ci.achv>=0?cells[ci.achv]:(ci.achvOnly>=0?cells[ci.achvOnly]:'');
+      if(ac){const am=ac.match(/([A-EP])\s*(?:\(\s*(\d+)\s*\))?/);if(am){achievement=am[1];studentCount=am[2]?parseInt(am[2],10):null;}}
+      const rankGrade=ci.rank>=0?(parseInt(cells[ci.rank],10)||null):null;
+      const isAbsolute=rankGrade==null&&stdDev==null;
+      out.push({semKey,n:subject,units,rawScore,mean,stdDev,studentCount,achievement,rankGrade,isAbsolute});
+    }
+  }
+  return out;
+}
+function extractNeisRecords(doc){
+  const pick=(re)=>{const els=Array.from(doc.querySelectorAll('[data-title]'));const el=els.find(e=>re.test(e.getAttribute('data-title')||''));return el?el.textContent.replace(/[ \t]+/g,' ').replace(/\n{2,}/g,'\n').trim():'';};
+  const 창체=pick(/창의적\s*체험활동/), 독서=pick(/독서활동/), 행특=pick(/행동특성/);
+  let 세특='';
+  const gs=Array.from(doc.querySelectorAll('[data-title]')).find(e=>/교과학습발달상황/.test(e.getAttribute('data-title')||''));
+  if(gs){const t=gs.textContent;const mi=t.indexOf('세부능력');세특=mi>=0?t.slice(mi).replace(/[ \t]+/g,' ').replace(/\n{2,}/g,'\n').trim():'';}
+  return {창체,세특,독서,행특};
+}
+/* ── 기재내용 미리보기 렌더 + 평가 버튼 ── */
+function renderNeisRecords(rec){
+  const box=document.getElementById('htmlPreview'); if(!box)return;
+  const sec=(label,txt,emoji)=>txt?`<details style="margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:8px 12px"><summary style="cursor:pointer;font-weight:700;font-size:13px">${emoji} ${label} <span style="color:var(--text3);font-weight:400">(${txt.length.toLocaleString()}자)</span></summary><div style="font-size:12px;line-height:1.6;color:var(--text2);margin-top:8px;max-height:240px;overflow-y:auto;white-space:pre-wrap">${txt.replace(/</g,'&lt;')}</div></details>`:'';
+  const html=`
+    <div class="vision-preview" style="margin-top:14px;border-top:2px dashed var(--border);padding-top:12px">
+      <div class="vp-title">📝 학생부 기재내용 분리 완료 — 성적과 별도로 추출했습니다</div>
+      ${sec('세부능력 및 특기사항(세특)',rec.세특,'📚')}
+      ${sec('창의적 체험활동(자율·동아리·진로)',rec.창체,'🎯')}
+      ${sec('독서활동상황',rec.독서,'📖')}
+      ${sec('행동특성 및 종합의견',rec.행특,'🧭')}
+      <div style="margin-top:12px">
+        <button class="btn btn-primary btn-sm" id="btnEvalRecords" onclick="evaluateRecords()">🤖 학생부 기재내용 AI 평가 (학업·진로·공동체)</button>
+        <span style="font-size:11px;color:var(--text3);margin-left:6px">※ 위에서 선택한 AI 제공사/키 사용(BYOK)</span>
+      </div>
+      <div id="recordEvalResult"></div>
+    </div>`;
+  box.insertAdjacentHTML('beforeend',html);
+}
+/* ── 학생부 기재내용 학종 평가 (BYOK) ── */
+function _gradeSummaryForEval(){
+  const subs=getAllSubjects().filter(s=>s.rankGrade&&s.units);
+  if(!subs.length)return '';
+  const w=(arr)=>{const n=arr.reduce((a,s)=>a+s.v*s.units,0),d=arr.reduce((a,s)=>a+s.units,0);return d?(n/d).toFixed(2):'—';};
+  const app=w(subs.map(s=>({v:s.rankGrade,units:s.units})));
+  const prec=w(subs.filter(s=>s.preciseGrade).map(s=>({v:s.preciseGrade,units:s.units})));
+  return `겉보기등급(석차) ${app} / 정밀등급 ${prec}`;
+}
+async function evaluateRecords(){
+  const rec=AS.records; if(!rec){showToast('⚠️ 먼저 NEIS HTML을 업로드하세요.');return;}
+  const provider=getAiProvider(), apiKey=getCurrentApiKey();
+  if(!provider){showToast('⚠️ AI 제공사를 먼저 선택하세요(AI 자동인식 탭).');return;}
+  if(!apiKey){showToast('⚠️ API 키를 입력해 주세요(AI 자동인식 탭).');return;}
+  const isGoogle=provider==='google';
+  const btn=document.getElementById('btnEvalRecords'); if(btn){btn.disabled=true;btn.textContent='🤖 평가 중…';}
+  const out=document.getElementById('recordEvalResult');
+  if(out)out.innerHTML='<div class="banner banner-info" style="margin-top:10px">🤖 AI가 학생부를 평가하는 중입니다…</div>';
+  const sys=`당신은 한국 대입 학생부종합전형 평가 전문가입니다. 제공된 학생부 기재내용(세특·창의적체험활동·독서·행동특성)과 성적 요약을 근거로 3대 역량을 평가하세요.
+평가 척도(5단계): A+(매우우수)·A(우수)·B+(양호)·B(보통)·C+(미흡)
+평가 요소:
+- 학업역량: 학업성취도·학업태도·탐구력(지적호기심·탐구깊이). 성적과 연동.
+- 진로역량: 전공(계열) 관련 교과이수·성취·진로탐색활동의 일관성과 깊이.
+- 공동체역량: 협업·소통·나눔·배려·성실·리더십.
+반드시 아래 JSON만 출력(다른 텍스트 금지):
+{"학업":{"등급":"A+","근거":"…"},"진로":{"등급":"A","근거":"…"},"공동체":{"등급":"B+","근거":"…"},"종합":{"등급":"A","총평":"…"}}
+근거는 기재내용의 구체적 사례를 인용해 각 2~3문장으로.`;
+  const userText=`[성적 요약] ${_gradeSummaryForEval()||'성적 미입력'}\n\n[세부능력 및 특기사항]\n${(rec.세특||'').slice(0,6000)}\n\n[창의적 체험활동]\n${(rec.창체||'').slice(0,3000)}\n\n[독서활동]\n${(rec.독서||'').slice(0,1500)}\n\n[행동특성 및 종합의견]\n${(rec.행특||'').slice(0,2000)}`;
+  try{
+    let raw='';
+    if(isGoogle){
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
+        {method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
+         body:JSON.stringify({contents:[{parts:[{text:sys+'\n\n'+userText}]}],generationConfig:{temperature:0.2,maxOutputTokens:2048}})});
+      if(!res.ok)throw new Error(`Google API ${res.status}: ${(await res.text()).slice(0,200)}`);
+      raw=(await res.json()).candidates?.[0]?.content?.parts?.[0]?.text||'';
+    }else{
+      const res=await fetch('https://api.anthropic.com/v1/messages',
+        {method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+         body:JSON.stringify({model:'claude-opus-4-5',max_tokens:2048,system:sys,messages:[{role:'user',content:userText}]})});
+      if(!res.ok)throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0,200)}`);
+      raw=(await res.json()).content?.find(c=>c.type==='text')?.text||'';
+    }
+    const jm=raw.match(/\{[\s\S]*\}/); if(!jm)throw new Error('JSON 응답을 찾지 못했습니다.');
+    const ev=JSON.parse(jm[0]);
+    const color=(g)=>({'A+':'#15803d','A':'#16a34a','B+':'#d97706','B':'#ea580c','C+':'#dc2626'}[g]||'#64748b');
+    const card=(label,o,emoji)=>`<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-weight:700;font-size:13px">${emoji} ${label}</span><span style="font-weight:800;font-size:14px;color:${color(o?.등급)}">${o?.등급||'—'}</span></div><div style="font-size:12px;line-height:1.6;color:var(--text2)">${(o?.근거||o?.총평||'').replace(/</g,'&lt;')}</div></div>`;
+    if(out)out.innerHTML=`<div class="vision-preview" style="margin-top:10px"><div class="vp-title">🎓 학생부종합전형 역량 평가</div>${card('학업역량',ev.학업,'📚')}${card('진로역량',ev.진로,'🎯')}${card('공동체역량',ev.공동체,'🤝')}${card('종합',ev.종합,'⭐')}<div style="font-size:11px;color:var(--text3);margin-top:8px">※ AI 보조 평가입니다. 합불 예측이 아니며 상담 참고용으로만 활용하세요.</div></div>`;
+    showToast('✅ 학생부 평가 완료!');
+  }catch(err){
+    if(out)out.innerHTML=`<div class="banner banner-warning" style="margin-top:10px">⚠️ 평가 오류: ${err.message}</div>`;
+    showToast('⚠️ 평가 오류: '+err.message,4500);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='🤖 학생부 기재내용 AI 평가 (학업·진로·공동체)';}
+  }
+}
+
+/* ── HTML 업로드 파싱 ── */
 function handleHtmlUpload(file){
   if(!file)return;
   const reader=new FileReader();
   reader.onload=e=>{
     try{
-      // 브라우저 DOMParser로 안전하게 파싱
       const parser=new DOMParser();
       const doc=parser.parseFromString(e.target.result,'text/html');
-      const tables=doc.querySelectorAll('table');
-      if(!tables.length){showToast('⚠️ HTML에서 테이블을 찾을 수 없습니다.');return;}
-
-      let bestRows=[];
-      // 가장 많은 행을 가진 테이블 선택
-      tables.forEach(tbl=>{
-        const rows=Array.from(tbl.querySelectorAll('tr'));
-        if(rows.length>bestRows.length)bestRows=rows;
-      });
-
-      // 첫 행이 헤더인지 확인 (숫자가 없으면 헤더로 간주)
-      const dataRows=bestRows.filter(tr=>{
-        const cells=Array.from(tr.querySelectorAll('td,th')).map(c=>c.textContent.trim());
-        // 학기 형식(1-1 등) 또는 숫자 포함 행만 데이터로
-        return cells.length>=2&&(ALL_SEMS.includes(cells[0])||cells.some((c,i)=>i>0&&!isNaN(parseFloat(c))));
-      });
-
-      if(!dataRows.length){showToast('⚠️ 유효한 성적 데이터 행을 찾지 못했습니다.');return;}
-
-      const parsed=dataRows.map(tr=>{
-        const cells=Array.from(tr.querySelectorAll('td,th')).map(c=>c.textContent.trim());
-        return{
-          semKey:cells[0]||'',
-          n:cells[1]||'',
-          units:cells[2]?parseFloat(cells[2])||null:null,
-          rawScore:cells[3]?parseFloat(cells[3])||null:null,
-          mean:cells[4]?parseFloat(cells[4])||null:null,
-          stdDev:cells[5]?parseFloat(cells[5])||null:null,
-          studentCount:cells[6]?parseInt(cells[6])||null:null,
-          achievement:cells[7]?cells[7].trim()||null:null,
-          rankGrade:cells[8]?parseInt(cells[8])||null:null,
-          isAbsolute:cells[7]?cells[7].trim()==='P':false,
-        };
-      }).filter(r=>ALL_SEMS.includes(r.semKey)&&r.n);
+      let parsed=[]; let neisRecords=null;
+      // ── ① NEIS 생활기록부 자동 인식 (robust 파서: 셀분해·학년추적) ──
+      if(isNeisReportCard(doc)){
+        parsed=extractNeisGrades(doc).filter(r=>ALL_SEMS.includes(r.semKey)&&r.n);
+        neisRecords=extractNeisRecords(doc);
+      }
+      // ── ② 폴백: 앱 템플릿(깨끗한 9칸 표) 위치 기반 파싱 ──
+      if(!parsed.length){
+        const tables=doc.querySelectorAll('table');
+        if(!tables.length){showToast('⚠️ HTML에서 테이블/생기부를 찾을 수 없습니다.');return;}
+        let bestRows=[];
+        tables.forEach(tbl=>{const rows=Array.from(tbl.querySelectorAll('tr'));if(rows.length>bestRows.length)bestRows=rows;});
+        const dataRows=bestRows.filter(tr=>{const cells=Array.from(tr.querySelectorAll('td,th')).map(c=>c.textContent.trim());return cells.length>=2&&(ALL_SEMS.includes(cells[0])||cells.some((c,i)=>i>0&&!isNaN(parseFloat(c))));});
+        parsed=dataRows.map(tr=>{
+          const cells=Array.from(tr.querySelectorAll('td,th')).map(c=>c.textContent.trim());
+          return{semKey:cells[0]||'',n:cells[1]||'',units:cells[2]?parseFloat(cells[2])||null:null,rawScore:cells[3]?parseFloat(cells[3])||null:null,mean:cells[4]?parseFloat(cells[4])||null:null,stdDev:cells[5]?parseFloat(cells[5])||null:null,studentCount:cells[6]?parseInt(cells[6])||null:null,achievement:cells[7]?cells[7].trim()||null:null,rankGrade:cells[8]?parseInt(cells[8])||null:null,isAbsolute:cells[7]?cells[7].trim()==='P':false};
+        }).filter(r=>ALL_SEMS.includes(r.semKey)&&r.n);
+      }
 
       if(!parsed.length){showToast('⚠️ 파싱된 성적 데이터가 없습니다. 컬럼 순서를 확인해 주세요.');return;}
 
@@ -1416,6 +1525,11 @@ function handleHtmlUpload(file){
           <button class="btn btn-primary btn-sm" onclick="setInputMethod('direct',document.querySelector('.im-tab'))">✏️ 직접 입력 탭에서 확인/수정</button>
         </div>`;
       showToast(`✅ HTML에서 ${parsed.length}개 과목 파싱 완료!`);
+      // ── 기재내용(세특·창체·독서·행특) 분리 표시 + 평가 버튼 ──
+      if(neisRecords&&(neisRecords.세특||neisRecords.창체||neisRecords.행특||neisRecords.독서)){
+        AS.records=neisRecords;
+        renderNeisRecords(neisRecords);
+      }
     }catch(err){
       showToast('⚠️ HTML 파싱 오류: '+err.message);
       document.getElementById('htmlPreview').innerHTML=`<div class="banner banner-warning" style="margin-top:12px">⚠️ 오류: ${err.message}</div>`;
