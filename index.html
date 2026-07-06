@@ -1392,12 +1392,39 @@ function extractNeisGrades(doc){
   return out;
 }
 function extractNeisRecords(doc){
-  const pick=(re)=>{const els=Array.from(doc.querySelectorAll('[data-title]'));const el=els.find(e=>re.test(e.getAttribute('data-title')||''));return el?el.textContent.replace(/[ \t]+/g,' ').replace(/\n{2,}/g,'\n').trim():'';};
-  const 창체=pick(/창의적\s*체험활동/), 독서=pick(/독서활동/), 행특=pick(/행동특성/);
-  let 세특='';
-  const gs=Array.from(doc.querySelectorAll('[data-title]')).find(e=>/교과학습발달상황/.test(e.getAttribute('data-title')||''));
-  if(gs){const t=gs.textContent;const mi=t.indexOf('세부능력');세특=mi>=0?t.slice(mi).replace(/[ \t]+/g,' ').replace(/\n{2,}/g,'\n').trim():'';}
-  return {창체,세특,독서,행특};
+  const cl=(s)=>(s==null?'':String(s).replace(/[ \t]+/g,' ').replace(/\n{2,}/g,'\n').trim());
+  // ── ① data-title 방식 (학교생활기록 정리 뷰어 포맷) ──
+  const dt=Array.from(doc.querySelectorAll('[data-title]'));
+  if(dt.length){
+    const pick=(re)=>{const el=dt.find(e=>re.test(e.getAttribute('data-title')||''));return el?cl(el.textContent):'';};
+    const 창체=pick(/창의적\s*체험활동/), 독서=pick(/독서활동/), 행특=pick(/행동특성/);
+    let 세특='';const gs=dt.find(e=>/교과학습발달상황/.test(e.getAttribute('data-title')||''));
+    if(gs){const t=gs.textContent;const mi=t.indexOf('세부능력');세특=mi>=0?cl(t.slice(mi)):'';}
+    if(창체||세특||독서||행특)return {창체,세특,독서,행특};
+  }
+  // ── ② 헤딩(h1~h4) 방식 (실제 NEIS 다운로드: "6. 창의적 체험활동상황" 등) ──
+  const out={창체:'',세특:'',독서:'',행특:''};
+  const secOf=(t)=>{
+    if(/창의적\s*체험활동/.test(t))return '창체';
+    if(/교과학습발달상황/.test(t))return '세특';
+    if(/독서활동/.test(t))return '독서';
+    if(/행동특성/.test(t))return '행특';
+    if(/^\s*\d+\s*\./.test(t))return '__stop__'; // 다른 번호 섹션 → 수집 중단
+    return null;
+  };
+  let cur=null;
+  const W=doc.createTreeWalker(doc.body,0x1|0x4,null); // ELEMENT | TEXT
+  let node=W.currentNode;
+  while(node){
+    if(node.nodeType===1&&/^H[1-4]$/.test(node.nodeName)){
+      const s=secOf(cl(node.textContent));
+      if(s==='__stop__')cur=null; else if(s)cur=s;
+    }else if(node.nodeType===3&&cur){ out[cur]+=node.textContent; }
+    node=W.nextNode();
+  }
+  if(out.세특){const mi=out.세특.indexOf('세부능력');if(mi>=0)out.세특=out.세특.slice(mi);}
+  for(const k in out)out[k]=cl(out[k]);
+  return out;
 }
 /* ── 기재내용 미리보기 렌더 + 평가 버튼 ── */
 function renderNeisRecords(rec,containerId='htmlPreview'){
