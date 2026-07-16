@@ -650,6 +650,9 @@ function calcWeightedAvg(entries){
   for(const e of entries){if(e.isAbsolute||e.preciseGrade==null)continue;sgu+=e.preciseGrade*(e.units||0);su+=(e.units||0);}
   return su===0?null:parseFloat((sgu/su).toFixed(2));
 }
+// ── 내신 석차등급 미산출 과목: 성적은 표시하되 내신등급·가중등급 산출에서 제외 ──
+const NAESIN_EXCLUDED_SUBJECTS=new Set(['과학탐구실험']);
+function isNaesinExcluded(s){return NAESIN_EXCLUDED_SUBJECTS.has(String((s&&s.n)||'').replace(/\s+/g,''));}
 const COMBO_DEFS=[
   {id:'all',label:'전교과',color:'#185FA5',groups:null},
   {id:'kems',label:'국영수과사',color:'#378ADD',groups:['국어','영어','수학','과학','사회']},
@@ -1019,6 +1022,7 @@ function updateComputedCells(s){
   }
 
   if(s.isAbsolute){zEl.innerHTML='<span style="color:var(--text3)">절대</span>';tEl.innerHTML='<span style="color:var(--text3)">—</span>';pEl.innerHTML=gbHTML(null,null,true,s.achievement);if(erEl)erEl.innerHTML='<span style="color:var(--text3)">—</span>';s.preciseGrade=null;s.intGrade=null;s.zScore=null;s.topPercent=null;return;}
+  if(isNaesinExcluded(s)){zEl.innerHTML='<span style="color:var(--text3)">—</span>';tEl.innerHTML='<span style="color:var(--text3)">—</span>';pEl.innerHTML='<span class="grade-badge abs" style="font-size:10px" title="과학탐구실험은 석차등급 미산출 과목으로 내신·가중등급 산출에서 제외됩니다">등급제외</span>';if(erEl)erEl.innerHTML='<span style="color:var(--text3)">—</span>';s.preciseGrade=null;s.intGrade=null;s.zScore=null;s.topPercent=null;return;}
   if(s.rawScore==null||s.mean==null){zEl.innerHTML='<span style="color:var(--text3)">—</span>';tEl.innerHTML='<span style="color:var(--text3)">—</span>';pEl.innerHTML=gbHTML(null,null,false,null);if(erEl)erEl.innerHTML='<span style="color:var(--text3)">—</span>';s.preciseGrade=null;s.intGrade=null;return;}
   if(!s.stdDev||s.stdDev<=0){zEl.innerHTML='<span style="font-size:10px;color:var(--text3)">N/A</span>';tEl.innerHTML='<span style="font-size:10px;color:var(--text3)">N/A</span>';pEl.innerHTML=`<span class="grade-badge abs" style="font-size:10px">성취도만</span>`;if(erEl)erEl.innerHTML='<span style="color:var(--text3)">—</span>';s.preciseGrade=null;s.intGrade=null;s.zScore=null;s.topPercent=null;return;}
   const r=calcPrecise(s.rawScore,s.mean,s.stdDev);if(!r)return;
@@ -1035,7 +1039,7 @@ function updateTableSummary(k){
   const wavg=calcWeightedAvg(calced.map(s=>({preciseGrade:s.preciseGrade,units:s.units||0,isAbsolute:s.isAbsolute})));
   const totalU=list.filter(s=>!s.isAbsolute&&s.units).reduce((a,b)=>a+(b.units||0),0);
   sumEl.style.display='flex';
-  sumEl.innerHTML=`<span class="ts-item">학기: <strong>${k}</strong></span><span class="ts-item">과목 수: <strong>${list.length}</strong></span><span class="ts-item">총 단위수: <strong>${totalU}</strong></span><span class="ts-item">계산 완료: <strong>${calced.length}</strong>/${list.filter(s=>!s.isAbsolute).length}과목</span>${wavg!=null?`<span class="ts-item" style="margin-left:auto">📊 ${k} 가중등급: ${gbHTML(wavg,Math.ceil(wavg),false,null)} <span style="font-size:11px;color:var(--text2);font-weight:700">${Math.ceil(wavg)}등급</span></span>`:''}`;
+  sumEl.innerHTML=`<span class="ts-item">학기: <strong>${k}</strong></span><span class="ts-item">과목 수: <strong>${list.length}</strong></span><span class="ts-item">총 단위수: <strong>${totalU}</strong></span><span class="ts-item">계산 완료: <strong>${calced.length}</strong>/${list.filter(s=>!s.isAbsolute&&!isNaesinExcluded(s)).length}과목</span>${wavg!=null?`<span class="ts-item" style="margin-left:auto">📊 ${k} 가중등급: ${gbHTML(wavg,Math.ceil(wavg),false,null)} <span style="font-size:11px;color:var(--text2);font-weight:700">${Math.ceil(wavg)}등급</span></span>`:''}`;
 }
 function updateStep4Btn(){const has=Object.values(AS.subjects).flat().some(s=>s.rawScore!=null||s.isAbsolute);document.getElementById('btnGoStep4').disabled=!has;}
 function renderStep3SubjectSummary(){
@@ -1260,7 +1264,8 @@ function applyParsedData(parsed){
     if(p.achievement!=null)s.achievement=p.achievement;
     if(p.rankGrade!=null)s.rankGrade=p.rankGrade;
     if(p.isAbsolute)s.isAbsolute=true;
-    if(!s.isAbsolute&&s.rawScore!=null&&s.mean!=null&&s.stdDev){
+    if(isNaesinExcluded(s)){s.preciseGrade=null;s.intGrade=null;s.zScore=null;s.topPercent=null;}
+    else if(!s.isAbsolute&&s.rawScore!=null&&s.mean!=null&&s.stdDev){
       const r=calcPrecise(s.rawScore,s.mean,s.stdDev);
       if(r){s.preciseGrade=r.pg;s.intGrade=r.ig;s.zScore=r.z;s.topPercent=r.top;}
     }
@@ -2072,7 +2077,7 @@ function loadStudentById(id){
   AS.subjects={};AS.customCombos=[];
   const subs=lsub_();
   subs.forEach(s=>{if(!AS.subjects[s.semKey])AS.subjects[s.semKey]=[];AS.subjects[s.semKey].push(s);});
-  Object.values(AS.subjects).flat().forEach(s=>{if(!s.isAbsolute&&s.rawScore!=null&&s.mean!=null&&s.stdDev){const r=calcPrecise(s.rawScore,s.mean,s.stdDev);if(r){s.preciseGrade=r.pg;s.intGrade=r.ig;s.zScore=r.z;s.topPercent=r.top;}}});
+  Object.values(AS.subjects).flat().forEach(s=>{if(isNaesinExcluded(s)){s.preciseGrade=null;s.intGrade=null;s.zScore=null;s.topPercent=null;}else if(!s.isAbsolute&&s.rawScore!=null&&s.mean!=null&&s.stdDev){const r=calcPrecise(s.rawScore,s.mean,s.stdDev);if(r){s.preciseGrade=r.pg;s.intGrade=r.ig;s.zScore=r.z;s.topPercent=r.top;}}});
   const cc=lcc_();
   AS.customCombos=cc||[];
   if(info){
@@ -2278,7 +2283,7 @@ function adminViewStudent(id){
   const subs=subsRaw?JSON.parse(subsRaw):[];
   if(!subs.length){document.getElementById('adminDetailSubjects').innerHTML='<div style="color:var(--text3);font-size:12px">등록된 성적 데이터가 없습니다.</div>';panel.style.display='';return;}
   // 재계산
-  subs.forEach(s=>{if(!s.isAbsolute&&s.rawScore!=null&&s.mean!=null&&s.stdDev){const r=calcPrecise(s.rawScore,s.mean,s.stdDev);if(r){s.preciseGrade=r.pg;s.intGrade=r.ig;s.topPercent=r.top;}}});
+  subs.forEach(s=>{if(isNaesinExcluded(s)){s.preciseGrade=null;s.intGrade=null;s.topPercent=null;}else if(!s.isAbsolute&&s.rawScore!=null&&s.mean!=null&&s.stdDev){const r=calcPrecise(s.rawScore,s.mean,s.stdDev);if(r){s.preciseGrade=r.pg;s.intGrade=r.ig;s.topPercent=r.top;}}});
   const semGroups={};
   subs.forEach(s=>{(semGroups[s.semKey]=semGroups[s.semKey]||[]).push(s);});
   let html='<div style="overflow-x:auto"><table class="admin-table"><thead><tr><th>학기</th><th>과목</th><th>교과군</th><th>단위수</th><th>원점수</th><th>평균</th><th>표준편차</th><th>성취도</th><th>정밀등급</th></tr></thead><tbody>';
