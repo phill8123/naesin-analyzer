@@ -647,8 +647,40 @@ function calcPrecise(raw,mean,sd){
 }
 function calcWeightedAvg(entries){
   let su=0,sgu=0;
-  for(const e of entries){if(e.isAbsolute||e.preciseGrade==null)continue;sgu+=e.preciseGrade*(e.units||0);su+=(e.units||0);}
+  for(const e of entries){
+    if(e.isAbsolute||e.preciseGrade==null)continue;
+    const u=Number(e.units);if(!(u>0))continue;          // 단위수 없으면 가중 산출 불가 → 분자·분모 동시 제외
+    sgu+=e.preciseGrade*u;su+=u;
+  }
   return su===0?null:parseFloat((sgu/su).toFixed(2));
+}
+/* ── 석차등급 단위수 가중평균 : Σ(석차등급 × 단위수) / Σ단위수 ──
+   정밀등급과 동일한 가중 기준을 적용한다(절대평가·석차 미산출 과목은 제외). */
+function calcWeightedRank(entries){
+  let su=0,sgu=0;
+  for(const e of entries){
+    if(e.isAbsolute||e.rankGrade==null)continue;
+    if(isNaesinExcluded(e))continue;
+    const u=Number(e.units);if(!(u>0))continue;
+    sgu+=e.rankGrade*u;su+=u;
+  }
+  return su===0?null:parseFloat((sgu/su).toFixed(2));
+}
+/* ── 가중 산출에 실제로 반영된 단위수 총합 (field: 'preciseGrade' | 'rankGrade') ── */
+function sumUnits(entries,field){
+  let su=0;
+  for(const e of entries){
+    if(e.isAbsolute)continue;
+    if(field&&e[field]==null)continue;
+    if(field==='rankGrade'&&isNaesinExcluded(e))continue;
+    const u=Number(e.units);if(!(u>0))continue;
+    su+=u;
+  }
+  return su;
+}
+/* ── 단위수 미입력으로 가중 산출에서 빠지는 과목 ── */
+function unitlessSubjects(entries){
+  return entries.filter(e=>!e.isAbsolute&&!isNaesinExcluded(e)&&(e.preciseGrade!=null||e.rankGrade!=null)&&!(Number(e.units)>0));
 }
 // ── 내신 석차등급 미산출 과목: 성적은 표시하되 내신등급·가중등급 산출에서 제외 ──
 const NAESIN_EXCLUDED_SUBJECTS=new Set(['과학탐구실험']);
@@ -1038,8 +1070,11 @@ function updateTableSummary(k){
   const calced=list.filter(s=>s.preciseGrade!=null);
   const wavg=calcWeightedAvg(calced.map(s=>({preciseGrade:s.preciseGrade,units:s.units||0,isAbsolute:s.isAbsolute})));
   const totalU=list.filter(s=>!s.isAbsolute&&s.units).reduce((a,b)=>a+(b.units||0),0);
+  const rankW=calcWeightedRank(list);
+  const miss=unitlessSubjects(list);
+  const missW=miss.length?`<span class="ts-item" style="color:#B91C1C;font-weight:800" title="${miss.map(s=>s.n).join(', ')}">⚠️ 단위수 미입력 ${miss.length}과목 → 가중평균 제외</span>`:'';
   sumEl.style.display='flex';
-  sumEl.innerHTML=`<span class="ts-item">학기: <strong>${k}</strong></span><span class="ts-item">과목 수: <strong>${list.length}</strong></span><span class="ts-item">총 단위수: <strong>${totalU}</strong></span><span class="ts-item">계산 완료: <strong>${calced.length}</strong>/${list.filter(s=>!s.isAbsolute&&!isNaesinExcluded(s)).length}과목</span>${wavg!=null?`<span class="ts-item" style="margin-left:auto">📊 ${k} 가중등급: ${gbHTML(wavg,Math.ceil(wavg),false,null)} <span style="font-size:11px;color:var(--text2);font-weight:700">${Math.ceil(wavg)}등급</span></span>`:''}`;
+  sumEl.innerHTML=`<span class="ts-item">학기: <strong>${k}</strong></span><span class="ts-item">과목 수: <strong>${list.length}</strong></span><span class="ts-item">총 단위수: <strong>${totalU}</strong></span><span class="ts-item">계산 완료: <strong>${calced.length}</strong>/${list.filter(s=>!s.isAbsolute&&!isNaesinExcluded(s)).length}과목</span>${wavg!=null?`<span class="ts-item" style="margin-left:auto">📊 ${k} 가중등급: ${gbHTML(wavg,Math.ceil(wavg),false,null)} <span style="font-size:11px;color:var(--text2);font-weight:700">${Math.ceil(wavg)}등급</span>${rankW!=null?` <span style="font-size:11px;color:var(--text2);font-weight:600">/ 석차 ${rankW.toFixed(2)}</span>`:''}</span>`:''}${missW}`;
 }
 function updateStep4Btn(){const has=Object.values(AS.subjects).flat().some(s=>s.rawScore!=null||s.isAbsolute);document.getElementById('btnGoStep4').disabled=!has;}
 function renderStep3SubjectSummary(){
@@ -1496,12 +1531,11 @@ async function extractRecordsVision(base64, mediaType, isPDF, provider, apiKey){
 
 /* ── 학생부 기재내용 학종 평가 (BYOK) ── */
 function _gradeSummaryForEval(){
-  const subs=getAllSubjects().filter(s=>s.rankGrade&&s.units);
-  if(!subs.length)return '';
-  const w=(arr)=>{const n=arr.reduce((a,s)=>a+s.v*s.units,0),d=arr.reduce((a,s)=>a+s.units,0);return d?(n/d).toFixed(2):'—';};
-  const app=w(subs.map(s=>({v:s.rankGrade,units:s.units})));
-  const prec=w(subs.filter(s=>s.preciseGrade).map(s=>({v:s.preciseGrade,units:s.units})));
-  return `겉보기등급(석차) ${app} / 정밀등급 ${prec}`;
+  const subs=getAllSubjects();
+  const app=calcWeightedRank(subs);                                            // 석차등급 단위수 가중
+  const prec=calcWeightedAvg(subs.filter(s=>!s.isAbsolute&&s.preciseGrade!=null)); // 정밀등급 단위수 가중
+  if(app==null&&prec==null)return '';
+  return `겉보기등급(석차) ${app!=null?app.toFixed(2):'—'} / 정밀등급 ${prec!=null?prec.toFixed(2):'—'}`;
 }
 async function evaluateRecords(){
   const rec=AS.records; if(!rec){showToast('⚠️ 먼저 NEIS HTML을 업로드하세요.');return;}
@@ -1626,29 +1660,7 @@ function getActiveSems(){return ALL_SEMS.filter(k=>(AS.subjects[k]||[]).length>0
 function getAllCombos(){return[...COMBO_DEFS,...AS.customCombos];}
 
 /* ── 조합 매트릭스 계산 ── */
-function buildComboMatrix(){
-  const allSubs=getAllSubjects();
-  const combos=getAllCombos();
-  const sems=getActiveSems();
-  const matrix={};
-  for(const c of combos){
-    matrix[c.id]={};
-    const vals=[];
-    for(const k of sems){
-      const semSubs=allSubs.filter(s=>{
-        if(s.semKey!==k)return false;
-        if(s.isAbsolute||s.preciseGrade==null)return false;
-        if(c.groups===null)return true;
-        return c.groups.includes(s.g);
-      });
-      if(!semSubs.length)continue;
-      const avg=calcWeightedAvg(semSubs);
-      if(avg!=null){matrix[c.id][k]=avg;vals.push(avg);}
-    }
-    matrix[c.id]['overall']=vals.length?parseFloat((vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2)):null;
-  }
-  return matrix;
-}
+/* (구버전 buildComboMatrix 제거 — 실제 사용되는 정의는 아래 섹션3 영역에 있음) */
 
 /* ── 대시보드 렌더링 진입점 ── */
 function renderDashboard(){
@@ -1721,18 +1733,18 @@ function renderSec1(){
     // 학기 정밀등급 + 석차등급 평균 footer row
     const calced=list.filter(s=>!s.isAbsolute&&s.preciseGrade!=null);
     const wavg=calcWeightedAvg(calced);
-    const rankList=list.filter(s=>s.rankGrade!=null&&!s.isAbsolute);
-    const rankAvg=rankList.length?parseFloat((rankList.reduce((a,b)=>a+(b.rankGrade||0),0)/rankList.length).toFixed(2)):null;
+    const rankAvg=calcWeightedRank(list);
+    const uP=sumUnits(list,'preciseGrade'), uR=sumUnits(list,'rankGrade');
     if(wavg!=null){
       const fr=document.createElement('tr');
       fr.style.background='var(--accent-lt)';fr.style.fontWeight='700';
       const rankCell=rankAvg!=null
-        ?`<span style="font-size:12px;color:var(--text2);font-weight:400;margin-left:12px">석차등급</span><span style="font-size:14px;font-weight:800;color:var(--text);margin-left:4px">${rankAvg.toFixed(2)}</span>`
+        ?`<span style="font-size:12px;color:var(--text2);font-weight:400;margin-left:12px">석차등급</span><span style="font-size:14px;font-weight:800;color:var(--text);margin-left:4px">${rankAvg.toFixed(2)}</span><span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:3px">(${uR}단위)</span>`
         :'';
       fr.innerHTML=`<td colspan="2" style="text-align:right;font-size:11px;color:var(--text2)">${k}</td><td colspan="6"></td>
         <td colspan="3" style="text-align:right;white-space:nowrap">
           <span style="font-size:11px;color:var(--text2);font-weight:400">정밀등급</span>
-          <span style="font-size:15px;font-weight:900;color:var(--accent);margin:0 6px">${wavg.toFixed(2)}</span>
+          <span style="font-size:15px;font-weight:900;color:var(--accent);margin:0 6px">${wavg.toFixed(2)}</span><span style="font-size:10px;color:var(--text3);font-weight:400">(${uP}단위)</span>
           ${rankCell}
         </td><td></td>`;
       tbody.appendChild(fr);
@@ -1749,10 +1761,7 @@ function renderSec2(){
     const semSubs=(AS.subjects[k]||[]).filter(s=>!s.isAbsolute&&s.preciseGrade!=null);
     return calcWeightedAvg(semSubs);
   });
-  const rankAvgData=sems.map(k=>{
-    const rankSubs=(AS.subjects[k]||[]).filter(s=>!s.isAbsolute&&s.rankGrade!=null);
-    return rankSubs.length?parseFloat((rankSubs.reduce((a,b)=>a+(b.rankGrade||0),0)/rankSubs.length).toFixed(2)):null;
-  });
+  const rankAvgData=sems.map(k=>calcWeightedRank(AS.subjects[k]||[]));
 
   // 데이터 포인트에 표시할 값 레이블용 plugin
   const dataLabelPlugin={
@@ -1847,7 +1856,7 @@ function renderSec3(){
 
   let html=`<thead><tr><th style="text-align:left">조합</th>`;
   sems.forEach(k=>{html+=`<th>${k}</th>`;});
-  html+=`<th class="avg-col" style="background:#FAEEDA">평균</th></tr></thead><tbody>`;
+  html+=`<th class="avg-col" style="background:#FAEEDA" title="전 학기 전 과목을 단위수로 통합 가중한 평균입니다 (학기 평균의 단순평균이 아님)">평균</th></tr></thead><tbody>`;
 
   combos.forEach((c,ci)=>{
     const m=matrix[c.id]||{};
@@ -1860,7 +1869,8 @@ function renderSec3(){
     });
     const ov=m['overall'], rov=m['rank_overall'];
     const ovRankStr=rov!=null?`<div style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;line-height:1">석차 ${rov.toFixed(2)}</div>`:'';
-    html+=`<td class="avg-col">${ov!=null?`<div style="display:inline-flex;flex-direction:column;align-items:center">${gbHTML(ov,Math.ceil(ov),false,null)}${ovRankStr}</div>`:'—'}</td></tr>`;
+    const ovUnitStr=m['u_overall']?`<div style="font-size:9px;color:var(--text3);font-weight:500;margin-top:1px;line-height:1">총 ${m['u_overall']}단위</div>`:'';
+    html+=`<td class="avg-col">${ov!=null?`<div style="display:inline-flex;flex-direction:column;align-items:center">${gbHTML(ov,Math.ceil(ov),false,null)}${ovRankStr}${ovUnitStr}</div>`:'—'}</td></tr>`;
   });
   html+='</tbody>';
   tbl.innerHTML=html;
@@ -1925,33 +1935,30 @@ function buildComboMatrix(){
   const combos=getAllCombos();
   const sems=getActiveSems();
   const matrix={};
+  // 조합 소속 판정
+  const inCombo=(c,s)=>c.isCustom?c.subjects.includes(s.n):(c.groups===null||c.groups.includes(s.g));
   for(const c of combos){
     matrix[c.id]={};
-    const vals=[], rankVals=[];
+    const allP=[], allR=[];   // 전 학기 누적(통합 가중용)
     for(const k of sems){
-      let semSubs;
-      if(c.isCustom){
-        semSubs=allSubs.filter(s=>s.semKey===k&&!s.isAbsolute&&s.preciseGrade!=null&&c.subjects.includes(s.n));
-      }else{
-        semSubs=allSubs.filter(s=>{
-          if(s.semKey!==k||s.isAbsolute||s.preciseGrade==null)return false;
-          if(c.groups===null)return true;
-          return c.groups.includes(s.g);
-        });
+      // 정밀등급 : 원점수·평균·표준편차로 산출된 과목
+      const pSubs=allSubs.filter(s=>s.semKey===k&&!s.isAbsolute&&s.preciseGrade!=null&&inCombo(c,s));
+      if(pSubs.length){
+        const avg=calcWeightedAvg(pSubs);
+        if(avg!=null){matrix[c.id][k]=avg;matrix[c.id]['u_'+k]=sumUnits(pSubs,'preciseGrade');allP.push(...pSubs);}
       }
-      if(!semSubs.length)continue;
-      const avg=calcWeightedAvg(semSubs);
-      if(avg!=null){matrix[c.id][k]=avg;vals.push(avg);}
-      // 석차등급 평균
-      const rankSubs=semSubs.filter(s=>s.rankGrade!=null);
-      if(rankSubs.length){
-        const ra=parseFloat((rankSubs.reduce((a,b)=>a+(b.rankGrade||0),0)/rankSubs.length).toFixed(2));
-        matrix[c.id]['rank_'+k]=ra;
-        rankVals.push(ra);
+      // 석차등급 : 학교 산출 석차등급이 있는 과목 (단위수 가중)
+      const rSubs=allSubs.filter(s=>s.semKey===k&&!s.isAbsolute&&s.rankGrade!=null&&inCombo(c,s));
+      if(rSubs.length){
+        const ra=calcWeightedRank(rSubs);
+        if(ra!=null){matrix[c.id]['rank_'+k]=ra;matrix[c.id]['ru_'+k]=sumUnits(rSubs,'rankGrade');allR.push(...rSubs);}
       }
     }
-    matrix[c.id]['overall']=vals.length?parseFloat((vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2)):null;
-    matrix[c.id]['rank_overall']=rankVals.length?parseFloat((rankVals.reduce((a,b)=>a+b,0)/rankVals.length).toFixed(2)):null;
+    // 평균 = 전 학기 전 과목 통합 단위수 가중 (학기평균의 단순평균이 아님)
+    matrix[c.id]['overall']=allP.length?calcWeightedAvg(allP):null;
+    matrix[c.id]['rank_overall']=allR.length?calcWeightedRank(allR):null;
+    matrix[c.id]['u_overall']=sumUnits(allP,'preciseGrade');
+    matrix[c.id]['ru_overall']=sumUnits(allR,'rankGrade');
   }
   return matrix;
 }
