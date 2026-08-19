@@ -1070,11 +1070,12 @@ function updateTableSummary(k){
   const calced=list.filter(s=>s.preciseGrade!=null);
   const wavg=calcWeightedAvg(calced.map(s=>({preciseGrade:s.preciseGrade,units:s.units||0,isAbsolute:s.isAbsolute})));
   const totalU=list.filter(s=>!s.isAbsolute&&s.units).reduce((a,b)=>a+(b.units||0),0);
+  const uCalc=sumUnits(list,'preciseGrade');
   const rankW=calcWeightedRank(list);
   const miss=unitlessSubjects(list);
   const missW=miss.length?`<span class="ts-item" style="color:#B91C1C;font-weight:800" title="${miss.map(s=>s.n).join(', ')}">⚠️ 단위수 미입력 ${miss.length}과목 → 가중평균 제외</span>`:'';
   sumEl.style.display='flex';
-  sumEl.innerHTML=`<span class="ts-item">학기: <strong>${k}</strong></span><span class="ts-item">과목 수: <strong>${list.length}</strong></span><span class="ts-item">총 단위수: <strong>${totalU}</strong></span><span class="ts-item">계산 완료: <strong>${calced.length}</strong>/${list.filter(s=>!s.isAbsolute&&!isNaesinExcluded(s)).length}과목</span>${wavg!=null?`<span class="ts-item" style="margin-left:auto">📊 ${k} 가중등급: ${gbHTML(wavg,Math.ceil(wavg),false,null)} <span style="font-size:11px;color:var(--text2);font-weight:700">${Math.ceil(wavg)}등급</span>${rankW!=null?` <span style="font-size:11px;color:var(--text2);font-weight:600">/ 석차 ${rankW.toFixed(2)}</span>`:''}</span>`:''}${missW}`;
+  sumEl.innerHTML=`<span class="ts-item">학기: <strong>${k}</strong></span><span class="ts-item">과목 수: <strong>${list.length}</strong></span><span class="ts-item">총 단위수: <strong>${totalU}</strong>${uCalc!==totalU?`<span style="font-size:10px;color:var(--text3);font-weight:500"> (등급산출 ${uCalc})</span>`:''}</span><span class="ts-item">계산 완료: <strong>${calced.length}</strong>/${list.filter(s=>!s.isAbsolute&&!isNaesinExcluded(s)).length}과목</span>${wavg!=null?`<span class="ts-item" style="margin-left:auto">📊 ${k} 가중등급: ${gbHTML(wavg,Math.floor(wavg),false,null)}${rankW!=null?` <span style="font-size:11px;color:var(--text2);font-weight:600">/ 석차등급 ${rankW.toFixed(2)}</span>`:''}</span>`:''}${missW}`;
 }
 function updateStep4Btn(){const has=Object.values(AS.subjects).flat().some(s=>s.rawScore!=null||s.isAbsolute);document.getElementById('btnGoStep4').disabled=!has;}
 function renderStep3SubjectSummary(){
@@ -1856,7 +1857,7 @@ function renderSec3(){
 
   let html=`<thead><tr><th style="text-align:left">조합</th>`;
   sems.forEach(k=>{html+=`<th>${k}</th>`;});
-  html+=`<th class="avg-col" style="background:#FAEEDA" title="전 학기 전 과목을 단위수로 통합 가중한 평균입니다 (학기 평균의 단순평균이 아님)">평균</th></tr></thead><tbody>`;
+  html+=`<th class="avg-col" style="background:#FAEEDA" title="위(큰 값) = 전 학기 전 과목을 단위수로 통합 가중한 평균 (대학 교과 산출 방식) / 아래 학기평균 = 학기별 평균을 학기 수로 나눈 값 (학기 균등 반영)">평균</th></tr></thead><tbody>`;
 
   combos.forEach((c,ci)=>{
     const m=matrix[c.id]||{};
@@ -1865,12 +1866,14 @@ function renderSec3(){
     sems.forEach(k=>{
       const v=m[k], ra=m['rank_'+k];
       const rankStr=ra!=null?`<div style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;line-height:1">석차 ${ra.toFixed(2)}</div>`:'';
-      html+=`<td style="vertical-align:middle">${v!=null?`<div style="display:inline-flex;flex-direction:column;align-items:center">${gbHTML(v,Math.ceil(v),false,null)}${rankStr}</div>`:'<span style="color:var(--text3)">—</span>'}</td>`;
+      html+=`<td style="vertical-align:middle">${v!=null?`<div style="display:inline-flex;flex-direction:column;align-items:center">${gbHTML(v,Math.floor(v),false,null)}${rankStr}</div>`:'<span style="color:var(--text3)">—</span>'}</td>`;
     });
     const ov=m['overall'], rov=m['rank_overall'];
     const ovRankStr=rov!=null?`<div style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;line-height:1">석차 ${rov.toFixed(2)}</div>`:'';
     const ovUnitStr=m['u_overall']?`<div style="font-size:9px;color:var(--text3);font-weight:500;margin-top:1px;line-height:1">총 ${m['u_overall']}단위</div>`:'';
-    html+=`<td class="avg-col">${ov!=null?`<div style="display:inline-flex;flex-direction:column;align-items:center">${gbHTML(ov,Math.ceil(ov),false,null)}${ovRankStr}${ovUnitStr}</div>`:'—'}</td></tr>`;
+    const ovs=m['overall_simple'], rovs=m['rank_overall_simple'];
+    const ovSimpleStr=ovs!=null?`<div style="font-size:9px;color:var(--text3);font-weight:500;margin-top:3px;padding-top:3px;border-top:1px dashed var(--border);line-height:1.4;white-space:nowrap" title="학기별 평균을 학기 수로 나눈 값입니다 (학기를 균등 반영)">학기평균 ${ovs.toFixed(2)}${rovs!=null?` · 석차 ${rovs.toFixed(2)}`:''}</div>`:'';
+    html+=`<td class="avg-col">${ov!=null?`<div style="display:inline-flex;flex-direction:column;align-items:center">${gbHTML(ov,Math.floor(ov),false,null)}${ovRankStr}${ovUnitStr}${ovSimpleStr}</div>`:'—'}</td></tr>`;
   });
   html+='</tbody>';
   tbl.innerHTML=html;
@@ -1959,6 +1962,11 @@ function buildComboMatrix(){
     matrix[c.id]['rank_overall']=allR.length?calcWeightedRank(allR):null;
     matrix[c.id]['u_overall']=sumUnits(allP,'preciseGrade');
     matrix[c.id]['ru_overall']=sumUnits(allR,'rankGrade');
+    // 병기용 : 학기평균의 단순평균 (학기를 균등 반영 — 대학 산출방식은 아님)
+    const semVals=sems.map(k=>matrix[c.id][k]).filter(v=>v!=null);
+    const semRanks=sems.map(k=>matrix[c.id]['rank_'+k]).filter(v=>v!=null);
+    matrix[c.id]['overall_simple']=semVals.length?parseFloat((semVals.reduce((a,b)=>a+b,0)/semVals.length).toFixed(2)):null;
+    matrix[c.id]['rank_overall_simple']=semRanks.length?parseFloat((semRanks.reduce((a,b)=>a+b,0)/semRanks.length).toFixed(2)):null;
   }
   return matrix;
 }
